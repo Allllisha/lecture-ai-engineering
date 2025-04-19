@@ -28,7 +28,6 @@ def load_model():
             tokenizer=MODEL_NAME,     
             torch_dtype=dtype,
             trust_remote_code=True,
-            device="cpu"    
         )
         st.success(f"モデル '{MODEL_NAME}' の読み込みに成功しました。")
         return pipe
