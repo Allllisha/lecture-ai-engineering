@@ -1,95 +1,96 @@
 # ui.py
 import streamlit as st
 import pandas as pd
-import time
 from database import save_to_db, get_chat_history, get_db_count, clear_db
 from llm import generate_response
 from data import create_sample_evaluation_data
 from metrics import get_metrics_descriptions
 
 # --- チャットページのUI ---
+
+def render_chat_bubble(role, text):
+    if role == "user":
+        st.markdown(f"""
+        <div style='background-color:#f5f5f5;padding:10px;border-radius:10px;margin-bottom:5px'>
+        <b>🧑‍💻 You:</b><br>{text}
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style='background-color:#e0f7fa;padding:10px;border-radius:10px;margin-bottom:10px'>
+        <b>🤖 Bot:</b><br>{text}
+        </div>
+        """, unsafe_allow_html=True)
+
 def display_chat_page(pipe):
     """チャットページのUIを表示する"""
+
+    with st.sidebar:
+        st.subheader("LLM 設定")
+        temperature = st.slider("Temperature", 0.1, 1.5, 0.7, 0.05)
+        top_p = st.slider("top‑p", 0.1, 1.0, 0.9, 0.05)
+
     st.subheader("質問を入力してください")
-    user_question = st.text_area("質問", key="question_input", height=100, value=st.session_state.get("current_question", ""))
+    user_question = st.text_area("質問", key="question_input", height=100)
     submit_button = st.button("質問を送信")
 
-    # セッション状態の初期化（安全のため）
-    if "current_question" not in st.session_state:
-        st.session_state.current_question = ""
-    if "current_answer" not in st.session_state:
-        st.session_state.current_answer = ""
-    if "response_time" not in st.session_state:
-        st.session_state.response_time = 0.0
-    if "feedback_given" not in st.session_state:
-        st.session_state.feedback_given = False
+    # セッション状態の初期化
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
-    # 質問が送信された場合
+    # 質問送信時の処理
     if submit_button and user_question:
-        st.session_state.current_question = user_question
-        st.session_state.current_answer = "" # 回答をリセット
-        st.session_state.feedback_given = False # フィードバック状態もリセット
-
         with st.spinner("モデルが回答を生成中..."):
-            answer, response_time = generate_response(pipe, user_question)
-            st.session_state.current_answer = answer
-            st.session_state.response_time = response_time
-            # ここでrerunすると回答とフィードバックが一度に表示される
+            answer, response_time = generate_response(pipe, user_question, temperature, top_p)
+            st.session_state.chat_history.append({
+                "question": user_question,
+                "answer": answer,
+                "response_time": response_time,
+                "feedback": None,
+                "correct_answer": "",
+                "is_correct": None
+            })
             st.rerun()
 
-    # 回答が表示されるべきか判断 (質問があり、回答が生成済みで、まだフィードバックされていない)
-    if st.session_state.current_question and st.session_state.current_answer:
-        st.subheader("回答:")
-        st.markdown(st.session_state.current_answer) # Markdownで表示
-        st.info(f"応答時間: {st.session_state.response_time:.2f}秒")
+    # 履歴を表示（複数ターン）
+    for i, chat in enumerate(st.session_state.chat_history):
+        render_chat_bubble("user", chat["question"])
+        render_chat_bubble("bot", chat["answer"])
+        st.info(f"応答時間: {chat['response_time']:.2f} 秒")
+        st.caption(f"Temp={temperature}, top‑p={top_p}")
 
-        # フィードバックフォームを表示 (まだフィードバックされていない場合)
-        if not st.session_state.feedback_given:
-            display_feedback_form()
-        else:
-             # フィードバック送信済みの場合、次の質問を促すか、リセットする
-             if st.button("次の質問へ"):
-                  # 状態をリセット
-                  st.session_state.current_question = ""
-                  st.session_state.current_answer = ""
-                  st.session_state.response_time = 0.0
-                  st.session_state.feedback_given = False
-                  st.rerun() # 画面をクリア
+        # フィードバック未送信ならフォームを表示
+        if chat["feedback"] is None:
+            with st.form(f"feedback_form_{i}"):
+                st.subheader("フィードバック")
+                feedback_options = ["正確", "部分的に正確", "不正確"]
+                feedback = st.radio("評価", feedback_options, horizontal=True)
+                correct_answer = st.text_area("より正確な回答（任意）")
+                comment = st.text_area("コメント（任意）")
+                submitted = st.form_submit_button("フィードバックを送信")
+                if submitted:
+                    is_correct = 1.0 if feedback == "正確" else (0.5 if feedback == "部分的に正確" else 0.0)
+                    chat["feedback"] = f"{feedback}: {comment}" if comment else feedback
+                    chat["correct_answer"] = correct_answer
+                    chat["is_correct"] = is_correct
+                    save_to_db(
+                        chat["question"],
+                        chat["answer"],
+                        chat["feedback"],
+                        correct_answer,
+                        is_correct,
+                        chat["response_time"]
+                    )
+                    st.success("フィードバックが送信されました")
+                    st.rerun()
 
+    if st.button("履歴をクリア"):
+        st.session_state.chat_history = []
+        st.rerun()
 
-def display_feedback_form():
-    """フィードバック入力フォームを表示する"""
-    with st.form("feedback_form"):
-        st.subheader("フィードバック")
-        feedback_options = ["正確", "部分的に正確", "不正確"]
-        # label_visibility='collapsed' でラベルを隠す
-        feedback = st.radio("回答の評価", feedback_options, key="feedback_radio", label_visibility='collapsed', horizontal=True)
-        correct_answer = st.text_area("より正確な回答（任意）", key="correct_answer_input", height=100)
-        feedback_comment = st.text_area("コメント（任意）", key="feedback_comment_input", height=100)
-        submitted = st.form_submit_button("フィードバックを送信")
-        if submitted:
-            # フィードバックをデータベースに保存
-            is_correct = 1.0 if feedback == "正確" else (0.5 if feedback == "部分的に正確" else 0.0)
-            # コメントがない場合でも '正確' などの評価はfeedbackに含まれるようにする
-            combined_feedback = f"{feedback}"
-            if feedback_comment:
-                combined_feedback += f": {feedback_comment}"
-
-            save_to_db(
-                st.session_state.current_question,
-                st.session_state.current_answer,
-                combined_feedback,
-                correct_answer,
-                is_correct,
-                st.session_state.response_time
-            )
-            st.session_state.feedback_given = True
-            st.success("フィードバックが保存されました！")
-            # フォーム送信後に状態をリセットしない方が、ユーザーは結果を確認しやすいかも
-            # 必要ならここでリセットして st.rerun()
-            st.rerun() # フィードバックフォームを消すために再実行
 
 # --- 履歴閲覧ページのUI ---
+
 def display_history_page():
     """履歴閲覧ページのUIを表示する"""
     st.subheader("チャット履歴と評価指標")
@@ -99,12 +100,9 @@ def display_history_page():
         st.info("まだチャット履歴がありません。")
         return
 
-    # タブでセクションを分ける
     tab1, tab2 = st.tabs(["履歴閲覧", "評価指標分析"])
-
     with tab1:
         display_history_list(history_df)
-
     with tab2:
         display_metrics_analysis(history_df)
 
