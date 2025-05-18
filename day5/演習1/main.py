@@ -55,17 +55,17 @@ def train_and_evaluate(
 # モデル保存
 def log_model(model, accuracy, params):
     with mlflow.start_run():
-        # パラメータをログ
+        # パラメータをログする
         for param_name, param_value in params.items():
             mlflow.log_param(param_name, param_value)
 
-        # メトリクスをログ
+        # メトリクスをログする
         mlflow.log_metric("accuracy", accuracy)
 
-        # モデルのシグネチャを推論
+        # モデルのシグネチャを推論する
         signature = infer_signature(X_train, model.predict(X_train))
 
-        # モデルを保存
+        # モデルを保存する
         mlflow.sklearn.log_model(
             model,
             "model",
