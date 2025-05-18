@@ -39,8 +39,8 @@ def test_data():
     # tests ディレクトリから見たデータファイルの絶対パスを計算
     data_fp = os.path.abspath(
         os.path.join(
-            os.path.dirname(__file__),  # …/day5/演習3/tests/
-            "..",                        # …/day5/演習3/
+            os.path.dirname(__file__),
+            "..",
             "data",
             "Titanic.csv"
         )
